@@ -3,8 +3,15 @@ import * as lib from "./lib/lib.js"
 
 // === SPRITES ===
 
-const playerSprite = await lib.texture.loadImage("assets/player.png", 64, 64);
+let playerSprite = await lib.texture.loadImage("assets/player.png", 64, 64);
 playerSprite.adjustColor(1, 0.5, 0);
+
+let playerSpritepiercing = await lib.texture.loadImage("assets/player.png", 64, 64);
+playerSpritepiercing.adjustColor(0.9, 0.1, 0.1);
+
+let playerSpriteshield = await lib.texture.loadImage("assets/player.png", 64, 64);
+playerSpriteshield.adjustColor(0.5, 0.5, 1);
+
 
 const enemySprite = await lib.texture.loadImage("assets/enemy1.png", 48, 48);
 enemySprite.adjustColor(0.2, 0.2, 1);
@@ -12,11 +19,14 @@ enemySprite.adjustColor(0.2, 0.2, 1);
 const bulletSprite = await lib.texture.loadImage("assets/bullet1.png", 24, 24);
 bulletSprite.rotate(Math.PI);
 
+const piercingbulletSprite = await lib.texture.loadImage("assets/bullet1.png", 24, 24);
+piercingbulletSprite.rotate(Math.PI);
+piercingbulletSprite.adjustColor(0.9, 0.1, 0.1)
+
 const enemybulletSprite = await lib.texture.loadImage("assets/bullet1.png", 24, 24)
 
 const powerupSprite = await lib.texture.loadImage("assets/player.png", 64, 64);
 powerupSprite.adjustColor(0, 1, 0);
-
 
 const explosionSprites = [
     await lib.texture.loadImage(`assets/explosion1.png`, 64, 64),
@@ -62,6 +72,11 @@ let lvl = 1;
 
 const gameoverScreenDelay = 1;
 let gameoverScreenTimer = 0;
+
+let currentpowerup = null;
+let leaderboard = []
+loadLeaderboard()
+
 // === LOGIC ===
 
 function loop() {
@@ -82,10 +97,10 @@ function tick() {
     spawnenemybullets()
     handleBulletCollisions();
     handleenemyBulletCollisions()
-
+    updatepowerups();
     updateExplosions();
 
-    
+
     if (firstUpdate) {
         spawnEnemies();
     }
@@ -101,10 +116,11 @@ function newLevel() {
     enemybulletSpeed = enemybulletSpeed + 50
     enemybulletCoolDown = enemybulletCoolDown * 0.9
     playerSpeed = playerSpeed + 35
+    bullets = [];
 }
 
 function resetLevel() {
-    enemies = [];   
+    enemies = [];
 
     bullets = [];
     bulletCooldownTimer = 0;
@@ -119,12 +135,29 @@ function resetLevel() {
 
     gamerunning = true;
     firstUpdate = true;
+    currentpowerup = null
 }
 
 function gameOver() {
     console.log("ej du dårlig. nåede du kun til lvl " + lvl + "? 😂")
     gameoverScreenTimer = 0;
     gamerunning = false
+
+    let highestlvl = leaderboardTop()?.lvl ?? null;
+    if (highestlvl == null || lvl >= highestlvl) {
+
+        let username = prompt("Hvad er dit navn?");
+
+        if (username != null && username != "") {
+            leaderboard.push({
+                lvl: lvl,
+                username: username.trim(),
+            })
+            saveLeaderboard()
+        }
+    }
+
+    console.log(leaderboardTop3())
 }
 
 function render() {
@@ -132,11 +165,31 @@ function render() {
 
     cx.clear("black");
 
-    cx.putTexture(playerSprite, player.x, player.y);
-    // cx.strokeRect(player.x, player.y, 64, 64, "red");
+
+    if (currentpowerup != null && currentpowerup.type == "shield") {
+        cx.putText("Du har shield", 150, 150, "#fbfbfbff");
+        cx.fillRect(150, 175, 171, 10, "grey")
+
+        let barWidth = currentpowerup.time / currentpowerup.totaltime * 171;
+        cx.fillRect(150, 175, barWidth, 10, "red")
+
+        cx.putTexture(playerSpriteshield, player.x, player.y);
+    } else if (currentpowerup != null && currentpowerup.type == "piercing") {
+        cx.putText("Du har piercing", 150, 150, "white");
+        cx.putTexture(playerSpritepiercing, player.x, player.y);
+    } else {
+        cx.putTexture(playerSprite, player.x, player.y);
+    }
 
     for (const bullet of bullets) {
-        cx.putTexture(bulletSprite, bullet.x, bullet.y);
+
+
+        if (bullet.piercing) {
+            cx.putTexture(piercingbulletSprite, bullet.x, bullet.y);
+        } else {
+            cx.putTexture(bulletSprite, bullet.x, bullet.y);
+
+        }
     }
     for (const enemy of enemies) {
         cx.putTexture(enemySprite, enemy.x, enemy.y);
@@ -153,7 +206,7 @@ function render() {
         cx.putTexture(texture, explosion.x - 32, explosion.y - 32);
     }
 
-    cx.putText("LvL "+lvl, 0, 0, "white");
+    cx.putText("LvL " + lvl, 0, 0, "white");
 
     if (!gamerunning) {
         if (gameoverScreenTimer >= gameoverScreenDelay) {
@@ -162,6 +215,14 @@ function render() {
             cx.putText("ej du dårlig.", 150, 150, "white");
             cx.putText("nåede du kun til lvl " + lvl + "? 😂", 70 - 3, 174 - 3, "black");
             cx.putText("nåede du kun til lvl " + lvl + "? 😂", 70, 174, "white");
+
+            const scores = leaderboardTop3();
+            for (let i = 0; i < 3 && i < scores.length; ++i) {
+                const score = scores[i];
+
+                score.username
+                cx.putText(`${i + 1}. ${score.username}: ${score.lvl}`, 0, 50 + i * 24, "white")
+            }
         }
     }
 }
@@ -214,7 +275,7 @@ function updateEnemyBulletMovement() {
 }
 function spawnenemybullets() {
     if (enemybulletCooldownTimer < 0) {
-        enemybulletCooldownTimer = enemybulletCoolDown / 2 
+        enemybulletCooldownTimer = enemybulletCoolDown / 2
             + (enemybulletCoolDown / 2) * Math.random();
 
         let enemyidx = Math.floor(enemies.length * Math.random())
@@ -238,13 +299,22 @@ function handleBulletCollisions() {
                 enemy.x, enemy.y, 48, 48,
             );
             if (isColliding) {
-                deadBullets.push(bulletIdx);
+                if (!bullet.piercing) {
+                    deadBullets.push(bulletIdx);
+                }
+
                 deadEnemies.push(enemyIdx);
                 explosions.push({
                     x: enemy.x + 24,
                     y: enemy.y + 24,
                     time: 0,
+
                 });
+
+                if (currentpowerup == null && Math.random() > 0.9) {
+                    givepowerup()
+                }
+
             }
 
         }
@@ -256,6 +326,25 @@ function handleBulletCollisions() {
         bullets.splice(i, 1)
     }
 }
+function givepowerup() {
+    if (Math.random() < 0.5) {
+        currentpowerup = { type: "shield", time: 5, totaltime: 5 }
+        console.log("you got shield powerup!")
+    } else {
+        currentpowerup = { type: "piercing", time: 2.5, totaltime: 2.5 }
+        console.log("you got piercing powerup!")
+    }
+
+}
+function updatepowerups() {
+    if (currentpowerup != null) {
+        currentpowerup.time -= lib.frameDeltaT
+        if (currentpowerup.time < 0) {
+            currentpowerup = null
+        }
+    }
+}
+
 function handleenemyBulletCollisions() {
     for (let bulletIdx = 0; bulletIdx < enemybullets.length; ++bulletIdx) {
 
@@ -265,7 +354,14 @@ function handleenemyBulletCollisions() {
             player.x, player.y, 64, 64,
         );
         if (isColliding) {
-            gameOver();
+
+
+            if (currentpowerup != null && currentpowerup.type == "shield") {
+                enemybullets.splice(bulletIdx, 1)
+                console.log("you've been saved by the shield")
+            } else {
+                gameOver()
+            }
         }
     }
 }
@@ -301,7 +397,11 @@ lib.onPress(" ", () => {
     }
     if (bulletCooldownTimer >= bulletCoolDown) {
         bulletCooldownTimer = 0;
-        bullets.push({ x: player.x + 20, y: 300 });
+        bullets.push({
+            x: player.x + 20,
+            y: 300,
+            piercing: currentpowerup != null && currentpowerup.type == "piercing",
+        });
     }
 });
 
@@ -310,3 +410,32 @@ lib.onPress("r", () => {
 });
 
 lib.startGame(loop);
+
+
+function leaderboardTop3() {
+    return leaderboard
+        .toSorted((a, b) => b.lvl - a.lvl)
+        .slice(0, 3);
+}
+
+function leaderboardTop() {
+    return leaderboard.toSorted((a, b) => b.lvl - a.lvl)[0];
+}
+
+function saveLeaderboard() {
+    sessionStorage.setItem("leaderboard", JSON.stringify(leaderboard));
+}
+
+function clearLeaderboard() {
+    leaderboard = [];
+    sessionStorage.removeItem("leaderboard");
+}
+
+function loadLeaderboard() {
+    const saved = sessionStorage.getItem("leaderboard");
+    if (saved == null) {
+        leaderboard = [];
+        return;
+    }
+    leaderboard = JSON.parse(saved);
+}
